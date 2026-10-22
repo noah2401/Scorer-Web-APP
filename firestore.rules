@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  // Replace BOTH placeholders with the two Authentication UIDs before deployment.
+  function allowed() { return request.auth != null && request.auth.uid in ['PLAYER_ONE_UID', 'PLAYER_TWO_UID']; }
+  function active() { return get(/databases/$(database)/documents/battles/main).data.status == 'active'; }
+  match /battles/main {
+   allow read: if allowed();
+   allow create, delete: if false;
+   allow update: if allowed()
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['label','startsOn','endsOn','status','final','archives','entryIds','revision'])
+    && request.resource.data.label is string && request.resource.data.label.size() > 0
+    && request.resource.data.startsOn <= request.resource.data.endsOn
+    && request.resource.data.status in ['active','closed']
+    && request.resource.data.revision == resource.data.revision + 1
+    && (active() || request.resource.data.status == 'active' || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revision']))
+    && indexValid()
+    && ((resource.data.status == 'active' && request.resource.data.status == 'closed'
+       && request.resource.data.archives.size() == resource.data.archives.size()+1
+       && request.resource.data.archives.removeAll([request.resource.data.archives[resource.data.archives.size()]]) == resource.data.archives)
+      || (request.resource.data.archives == resource.data.archives)) ;
+   function indexValid() {
+    let added = request.resource.data.entryIds.removeAll(resource.data.entryIds);
+    let removed = resource.data.entryIds.removeAll(request.resource.data.entryIds);
+    return added.size() <= 1 && removed.size() <= 1
+      && (added.size() == 0 || (getAfter(/databases/$(database)/documents/battles/main/entries/$(added[0])).data.ownerUid == request.auth.uid
+          && getAfter(/databases/$(database)/documents/battles/main/entries/$(added[0])).data.kind == 'match'))
+      && (removed.size() == 0 || (get(/databases/$(database)/documents/battles/main/entries/$(removed[0])).data.ownerUid == request.auth.uid
+          && !existsAfter(/databases/$(database)/documents/battles/main/entries/$(removed[0]))));
+   }
+   match /entries/{id} {
+    allow read: if allowed();
+    function validMatch(d) { return d.keys().hasOnly(['kind','id','ownerUid','playedOn','opponent','goals','assists','homeAway','competition','result','notes'])
+      && d.kind == 'match' && d.id == id && d.ownerUid == request.auth.uid
+      && d.goals is int && d.goals >= 0 && d.goals <= 1000
+      && d.assists is int && d.assists >= 0 && d.assists <= 1000
+      && d.opponent is string && d.opponent.size() > 0 && d.opponent.size() <= 100
+      && d.playedOn.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+      && d.playedOn >= get(/databases/$(database)/documents/battles/main).data.startsOn
+      && d.playedOn <= get(/databases/$(database)/documents/battles/main).data.endsOn; }
+    allow create: if allowed() && active() && validMatch(request.resource.data);
+    allow delete: if allowed() && active() && resource.data.kind == 'match' && resource.data.ownerUid == request.auth.uid;
+    allow update: if allowed() && (
+      (active() && resource.data.kind == 'match' && resource.data.ownerUid == request.auth.uid && validMatch(request.resource.data)) ||
+      (resource.data.kind == 'player' && id == request.auth.uid && request.resource.data.uid == resource.data.uid
+       && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','team','photoURL','target','changes'])
+       && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 40
+       && request.resource.data.target is int && request.resource.data.target > 0 && request.resource.data.target <= 100000
+       && (active() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['target','changes']))
+       && ((request.resource.data.target == resource.data.target && request.resource.data.changes == resource.data.changes) ||
+        (request.resource.data.changes.size() == resource.data.changes.size()+1
+         && request.resource.data.changes[resource.data.changes.size()].uid == request.auth.uid
+         && request.resource.data.changes[resource.data.changes.size()].oldValue == resource.data.target
+         && request.resource.data.changes[resource.data.changes.size()].newValue == request.resource.data.target
+         && request.resource.data.changes.removeAll([request.resource.data.changes[resource.data.changes.size()]]) == resource.data.changes)))
+     );
+   }
+  }
+ }
+}
