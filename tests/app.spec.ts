@@ -14,3 +14,17 @@ test('target update, season close, reopen and retained result',async({page})=>{
  await page.getByRole('button',{name:'Saison wieder öffnen'}).click();await page.getByRole('button',{name:'Wiederöffnung bestätigen'}).click();await expect(page.getByRole('button',{name:'Spiel erfassen',exact:true})).toBeEnabled();await expect(page.locator('.change')).toContainText('Spieler 1 gewinnt mit 120 %');
 });
 test('mobile layout does not overflow',async({page})=>{await page.setViewportSize({width:390,height:844});await page.goto('/');await expect(page.getByRole('heading',{name:'Euer Scorer Battle.'})).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);await page.screenshot({path:'/tmp/scorer-mobile.png',fullPage:true});});
+
+test('save works when crypto.randomUUID is unavailable',async({page})=>{
+ await page.addInitScript(()=>Object.defineProperty(window.crypto,'randomUUID',{value:undefined,configurable:true}));
+ const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('/');await page.getByRole('button',{name:'Spiel erfassen',exact:true}).click();
+ await page.getByLabel('Spieldatum',{exact:true}).fill('2026-10-28');
+ await page.getByLabel('Gegner',{exact:true}).fill('SC GW Varensell II');
+ await page.getByLabel('Vorlagen',{exact:true}).fill('1');
+ await page.getByRole('button',{name:'Spiel speichern'}).click();
+ await expect(page.getByRole('dialog')).toHaveCount(0);
+ await expect(page.locator('.big-score').first()).toContainText('25');
+ await page.reload();await expect(page.locator('.big-score').first()).toContainText('25');
+ expect(errors).toEqual([]);
+});
