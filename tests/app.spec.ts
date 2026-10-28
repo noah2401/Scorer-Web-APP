@@ -28,3 +28,52 @@ test('save works when crypto.randomUUID is unavailable',async({page})=>{
  await page.reload();await expect(page.locator('.big-score').first()).toContainText('25');
  expect(errors).toEqual([]);
 });
+
+test('profile photo can be selected, saved, replaced and removed without changing the other player',async({page})=>{
+ await page.setViewportSize({width:390,height:844});
+ await page.goto('/');
+ await page.getByRole('button',{name:'Profil & Ziel',exact:true}).click();
+ const input=page.getByLabel('Profilbild auswählen',{exact:true});
+ const chooser=page.waitForEvent('filechooser');
+ await page.getByRole('button',{name:'Bild auswählen',exact:true}).click();
+ await (await chooser).setFiles('public/icon-192.png');
+ const preview=page.locator('.profile-photo-preview img');
+ await expect(preview).toHaveAttribute('src',/^data:image\/jpeg;base64,/);
+ const firstImage=await preview.getAttribute('src');
+ expect(firstImage!.length).toBeLessThanOrEqual(64*1024);
+ expect(await preview.evaluate((img:HTMLImageElement)=>[img.naturalWidth,img.naturalHeight])).toEqual([320,320]);
+ await page.getByRole('button',{name:'Profil speichern',exact:true}).click();
+ await expect(page.getByRole('status')).toContainText('Profil gespeichert.');
+ await page.reload();
+ await expect(page.locator('.card-player').first().locator('img')).toHaveAttribute('src',firstImage!);
+ await expect(page.locator('.card-player').nth(1).locator('img')).toHaveCount(0);
+ await page.getByRole('button',{name:'Profil & Ziel',exact:true}).click();
+ await input.setInputFiles('public/icon-512.png');
+ await expect(page.getByRole('button',{name:'Profil speichern',exact:true})).toBeEnabled();
+ await page.getByRole('button',{name:'Profil speichern',exact:true}).click();
+ await expect(page.getByRole('status')).toContainText('Profil gespeichert.');
+ await page.getByRole('button',{name:'Bild entfernen',exact:true}).click();
+ await expect(preview).toHaveCount(0);
+ await page.getByRole('button',{name:'Profil speichern',exact:true}).click();
+ await page.reload();
+ await expect(page.locator('.card-player').first().locator('img')).toHaveCount(0);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+});
+
+test('invalid photo files show feedback and keep the existing photo',async({page})=>{
+ await page.goto('/');await page.getByRole('button',{name:'Profil & Ziel',exact:true}).click();
+ const input=page.getByLabel('Profilbild auswählen',{exact:true});
+ await input.setInputFiles('public/icon-192.png');
+ const preview=page.locator('.profile-photo-preview img');
+ await expect(preview).toBeVisible();
+ const previous=await preview.getAttribute('src');
+ await input.setInputFiles({name:'document.pdf',mimeType:'application/pdf',buffer:Buffer.from('not an image')});
+ await expect(page.getByRole('alert')).toContainText('Bitte wähle eine Bilddatei');
+ await expect(preview).toHaveAttribute('src',previous!);
+ await input.setInputFiles({name:'broken.png',mimeType:'image/png',buffer:Buffer.from('broken image')});
+ await expect(page.getByRole('alert')).toContainText('Dieses Bildformat konnte nicht geöffnet werden');
+ await input.setInputFiles({name:'large.jpg',mimeType:'image/jpeg',buffer:Buffer.alloc(15*1024*1024+1)});
+ await expect(page.getByRole('alert')).toContainText('höchstens 15 MB');
+ await expect(preview).toHaveAttribute('src',previous!);
+ await expect(page.getByRole('button',{name:'Profil speichern',exact:true})).toBeEnabled();
+});
